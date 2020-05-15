@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2002-2020  The DOSBox Team
+ *  Copyright (C) 2002-2019  The DOSBox Team
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -20,9 +20,6 @@
 #include <sys/types.h>
 #include <assert.h>
 #include <math.h>
-#include <fstream>
-#include <sstream>
-#include <stdlib.h>
 
 #include "dosbox.h"
 #include "video.h"
@@ -33,17 +30,185 @@
 #include "cross.h"
 #include "hardware.h"
 #include "support.h"
-#include "shell.h"
 
 #include "render_scalers.h"
-#include "render_glsl.h"
+
+#include "SDL_opengl.h"
+
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdarg.h>
+#include <sys/types.h>
+#ifdef WIN32
+#include <signal.h>
+#include <process.h>
+#endif
+
+#include "cross.h"
+#include "SDL.h"
+
+#include "dosbox.h"
+#include "video.h"
+#include "mouse.h"
+#include "pic.h"
+#include "timer.h"
+#include "setup.h"
+#include "support.h"
+#include "debug.h"
+#include "mapper.h"
+#include "vga.h"
+#include "keyboard.h"
+#include "cpu.h"
+#include "cross.h"
+#include "control.h"
+
+
+enum PRIORITY_LEVELS {
+	PRIORITY_LEVEL_PAUSE,
+	PRIORITY_LEVEL_LOWEST,
+	PRIORITY_LEVEL_LOWER,
+	PRIORITY_LEVEL_NORMAL,
+	PRIORITY_LEVEL_HIGHER,
+	PRIORITY_LEVEL_HIGHEST
+};
+
+
+enum SCREEN_TYPES	{
+	SCREEN_SURFACE,
+	SCREEN_SURFACE_DDRAW,
+	SCREEN_OVERLAY,
+	SCREEN_OPENGL
+};
+
+
+struct SDL_Block {
+	bool inited;
+	bool active;							//If this isn't set don't draw
+	bool updating;
+	struct {
+		Bit32u width;
+		Bit32u height;
+		Bit32u bpp;
+		Bitu flags;
+		double scalex,scaley;
+		GFX_CallBack_t callback;
+	} draw;
+	bool wait_on_error;
+	struct {
+		struct {
+			Bit16u width, height;
+			bool fixed;
+		} full;
+		struct {
+			Bit16u width, height;
+		} window;
+		Bit8u bpp;
+		bool fullscreen;
+		bool lazy_fullscreen;
+		bool lazy_fullscreen_req;
+		bool doublebuf;
+		SCREEN_TYPES type;
+		SCREEN_TYPES want_type;
+	} desktop;
+#if C_OPENGL
+	struct {
+		Bitu pitch;
+		void * framebuf;
+		GLuint buffer;
+		GLuint texture;
+		GLuint displaylist;
+		GLint max_texsize;
+		bool bilinear;
+		bool packed_pixel;
+		bool paletted_texture;
+		bool pixel_buffer_object;
+	} opengl;
+#endif
+	struct {
+		SDL_Surface * surface;
+#if C_DDRAW
+		RECT rect;
+#endif
+	} blit;
+	struct {
+		PRIORITY_LEVELS focus;
+		PRIORITY_LEVELS nofocus;
+	} priority;
+	SDL_Rect clip;
+	SDL_Surface * surface;
+	SDL_Overlay * overlay;
+	SDL_cond *cond;
+	struct {
+		bool autolock;
+		bool autoenable;
+		bool requestlock;
+		bool locked;
+		int xsensitivity;
+		int ysensitivity;
+	} mouse;
+	SDL_Rect updateRects[1024];
+	Bitu num_joysticks;
+#if defined (WIN32)
+	bool using_windib;
+	// Time when sdl regains focus (alt-tab) in windowed mode
+	Bit32u focus_ticks;
+#endif
+	// state of alt-keys for certain special handlings
+	Bit8u laltstate;
+	Bit8u raltstate;
+};
 
 Render_t render;
 ScalerLineHandler_t RENDER_DrawLine;
 
 static void RENDER_CallBack( GFX_CallBackFunctions_t function );
+extern SDL_Block sdl;
 
-static void Check_Palette(void) {
+Bitu inline GFX_GetRGB(Bit8u red,Bit8u green,Bit8u blue) {
+	switch (sdl.desktop.type) {
+	case SCREEN_SURFACE:
+	case SCREEN_SURFACE_DDRAW:
+#if __MORPHOS__
+		return blue <<24 | green << 16 | red << 8;
+	
+	case SCREEN_OVERLAY:
+		{
+		short ret = ((red>>3)<<11)|((green>>2)<<5)|(blue>>3);
+			return  __builtin_bswap16(ret);
+		}
+#else
+		return SDL_MapRGB(sdl.surface->format,red,green,blue);
+
+	case SCREEN_OVERLAY:
+		{
+			Bit8u y =  ( 9797*(red) + 19237*(green) +  3734*(blue) ) >> 15;
+			Bit8u u =  (18492*((blue)-(y)) >> 15) + 128;
+			Bit8u v =  (23372*((red)-(y)) >> 15) + 128;
+#ifdef WORDS_BIGENDIAN
+			return (y << 0) | (v << 8) | (y << 16) | (u << 24);
+#else
+			return (u << 0) | (y << 8) | (v << 16) | (y << 24);
+#endif
+		}
+#endif
+	case SCREEN_OPENGL:
+	#ifndef __MORPHOS__
+		//return ((red << 0) | (green << 8) | (blue << 16)) | (255 << 24);
+		//USE BGRA	
+		return ((blue << 0) | (green << 8) | (red << 16)) | (255 << 24);
+	#else
+	// ARGB
+	return ((0 << 24 | (red << 8) | (green << 16) | (blue << 24)));
+	#endif
+	}
+	return 0;
+}
+
+
+static inline void Check_Palette(void) {
 	/* Clean up any previous changed palette data */
 	if (render.pal.changed) {
 		memset(render.pal.modified, 0, sizeof(render.pal.modified));
@@ -216,7 +381,6 @@ void RENDER_EndUpdate( bool abort ) {
 			if (render.src.dblw) flags|=CAPTURE_FLAG_DBLW;
 			if (render.src.dblh) flags|=CAPTURE_FLAG_DBLH;
 		}
-		if (render.scale.outWrite==NULL) flags|=CAPTURE_FLAG_DUPLICATE;
 		float fps = render.src.fps;
 		pitch = render.scale.cachePitch;
 		if (render.frameskip.max)
@@ -235,7 +399,6 @@ void RENDER_EndUpdate( bool abort ) {
 			total += render.frameskip.hadSkip[i];
 		LOG_MSG( "Skipped frame %d %d", PIC_Ticks, (total * 100) / RENDER_SKIP_CACHE );
 #endif
-		if (RENDER_GetForceUpdate()) GFX_EndUpdate(0);
 	}
 	render.frameskip.index = (render.frameskip.index + 1) & (RENDER_SKIP_CACHE - 1);
 	render.updating=false;
@@ -288,11 +451,6 @@ static void RENDER_Reset( void ) {
 		gfx_scalew = 1;
 		gfx_scaleh = 1;
 	}
-
-	/* Don't do software scaler sizes larger than 4k */
-	Bitu maxsize_current_input = SCALER_MAXLINE_WIDTH/width;
-	if (render.scale.size > maxsize_current_input) render.scale.size = maxsize_current_input;
-
 	if ((dblh && dblw) || (render.scale.forced && !dblh && !dblw)) {
 		/* Initialize always working defaults */
 		if (render.scale.size == 2)
@@ -360,10 +518,6 @@ static void RENDER_Reset( void ) {
 #endif
 	} else if (dblw) {
 		simpleBlock = &ScaleNormalDw;
-		if (width * simpleBlock->xscale > SCALER_MAXLINE_WIDTH) {
-			// This should only happen if you pick really bad values... but might be worth adding selecting a scaler that fits
-			simpleBlock = &ScaleNormal1x;
-		}
 	} else if (dblh) {
 		simpleBlock = &ScaleNormalDh;
 	} else  {
@@ -435,9 +589,6 @@ forcenormal:
 		}
 	}
 /* Setup the scaler variables */
-#if C_OPENGL
-	GFX_SetShader(render.shader_src);
-#endif
 	gfx_flags=GFX_SetSize(width,height,gfx_flags,gfx_scalew,gfx_scaleh,&RENDER_CallBack);
 	if (gfx_flags & GFX_CAN_8)
 		render.scale.outMode = scalerMode8;
@@ -582,76 +733,6 @@ static void ChangeScaler(bool pressed) {
 	RENDER_CallBack( GFX_CallBackReset );
 } */
 
-bool RENDER_GetForceUpdate(void) {
-	return render.forceUpdate;
-}
-
-void RENDER_SetForceUpdate(bool f) {
-	render.forceUpdate = f;
-}
-
-#if C_OPENGL
-static bool RENDER_GetShader(std::string& shader_path) {
-	char* src;
-	std::stringstream buf;
-	std::ifstream fshader(shader_path.c_str(), std::ios_base::binary);
-	if (!fshader.is_open()) fshader.open((shader_path + ".glsl").c_str(), std::ios_base::binary);
-	if (fshader.is_open()) {
-		buf << fshader.rdbuf();
-		fshader.close();
-	}
-	else if (shader_path == "advinterp2x") buf << advinterp2x_glsl;
-	else if (shader_path == "advinterp3x") buf << advinterp3x_glsl;
-	else if (shader_path == "advmame2x")   buf << advmame2x_glsl;
-	else if (shader_path == "advmame3x")   buf << advmame3x_glsl;
-	else if (shader_path == "rgb2x")       buf << rgb2x_glsl;
-	else if (shader_path == "rgb3x")       buf << rgb3x_glsl;
-	else if (shader_path == "scan2x")      buf << scan2x_glsl;
-	else if (shader_path == "scan3x")      buf << scan3x_glsl;
-	else if (shader_path == "tv2x")        buf << tv2x_glsl;
-	else if (shader_path == "tv3x")        buf << tv3x_glsl;
-	else if (shader_path == "sharp")       buf << sharp_glsl;
-
-	if (!buf.str().empty()) {
-		std::string s = buf.str();
-		if (first_shell) {
-			std::string pre_defs;
-			Bitu count = first_shell->GetEnvCount();
-			for (Bitu i=0; i < count; i++) {
-				std::string env;
-				if (!first_shell->GetEnvNum(i, env))
-					continue;
-				if (env.compare(0, 9, "GLSHADER_")==0) {
-					size_t brk = s.find('=');
-					if (brk == std::string::npos) continue;
-					env[brk] = ' ';
-					pre_defs += "#define " + env.substr(0) + '\n';
-				}
-			}
-			if (!pre_defs.empty()) {
-				// if "#version" occurs it must be before anything except comments and whitespace
-				size_t pos = buf.str().find("#version ");
-				if (pos != std::string::npos) pos = buf.str().find('\n', pos+9);
-				if (pos == std::string::npos) pos = 0;
-				else ++pos;
-				s = buf.str().insert(pos, pre_defs);
-			}
-		}
-		// keep the same buffer if contents aren't different
-		if (render.shader_src==NULL || s != render.shader_src) {
-			src = strdup(s.c_str());
-			if (src==NULL) LOG_MSG("WARNING: Couldn't copy shader source");
-		} else { 
-			src = render.shader_src;
-			render.shader_src = NULL;
-		}
-	} else src = NULL;
-	free(render.shader_src);
-	render.shader_src = src;
-	return src != NULL;
-}
-#endif
-
 void RENDER_Init(Section * sec) {
 	Section_prop * section=static_cast<Section_prop *>(sec);
 
@@ -705,31 +786,10 @@ void RENDER_Init(Section * sec) {
 	else if (scaler == "scan3x"){ render.scale.op = scalerOpScan;render.scale.size = 3; }
 #endif
 
-#if C_OPENGL
-	char* shader_src = render.shader_src;
-	Prop_path *sh = section->Get_path("glshader");
-	f = (std::string)sh->GetValue();
-	if (f.empty() || f=="none") {
-		free(render.shader_src);
-		render.shader_src = NULL;
-	} else if (!RENDER_GetShader(sh->realpath)) {
-		std::string path;
-		Cross::GetPlatformConfigDir(path);
-		path = path + "glshaders" + CROSS_FILESPLIT + f;
-		if (!RENDER_GetShader(path) && (sh->realpath==f || !RENDER_GetShader(f))) {
-			sh->SetValue("none");
-			LOG_MSG("Shader file \"%s\" not found", f.c_str());
-		}
-	}
-#endif
-
 	//If something changed that needs a ReInit
 	// Only ReInit when there is a src.bpp (fixes crashes on startup and directly changing the scaler without a screen specified yet)
 	if(running && render.src.bpp && ((render.aspect != aspect) || (render.scale.op != scaleOp) || 
 				  (render.scale.size != scalersize) || (render.scale.forced != scalerforced) ||
-#if C_OPENGL
-				  (render.shader_src != shader_src) ||
-#endif
 				   render.scale.forced))
 		RENDER_CallBack( GFX_CallBackReset );
 

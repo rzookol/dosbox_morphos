@@ -26,6 +26,10 @@
 #include "dos_system.h"
 #include "shell.h" /* for DOS_Shell */
 
+#ifdef __MORPHOS__
+#undef Enable
+#endif
+
 bool WildFileCmp(const char * file, const char * wild);
 void Set_Label(char const * const input, char * const output, bool cdrom);
 

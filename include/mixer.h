@@ -24,6 +24,10 @@
 #include "dosbox.h"
 #endif
 
+#ifdef __MORPHOS__
+#undef Enable
+#endif
+
 typedef void (*MIXER_MixHandler)(Bit8u * sampdate,Bit32u len);
 typedef void (*MIXER_Handler)(Bitu len);
 

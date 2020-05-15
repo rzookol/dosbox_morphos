@@ -24,6 +24,10 @@
 #include "mem.h"
 #endif 
 
+#ifdef __MORPHOS__
+#undef Allocate
+#endif
+
 typedef Bitu (*CallBack_Handler)(void);
 extern CallBack_Handler CallBack_Handlers[];
 

@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2002-2020  The DOSBox Team
+ *  Copyright (C) 2002-2019  The DOSBox Team
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 
 #include "dosbox.h"
 
-#if (C_DYNREC)
+#if (C_DYNREC) 
 
 #include <assert.h>
 #include <stdarg.h>
@@ -52,7 +52,7 @@
 #include "lazyflags.h"
 #include "pic.h"
 
-#define CACHE_MAXSIZE	(4096*2)
+#define CACHE_MAXSIZE	(65536*2)
 #define CACHE_TOTAL		(1024*1024*8)
 #define CACHE_PAGES		(512)
 #define CACHE_BLOCKS	(128*1024)
@@ -138,6 +138,7 @@ static struct {
 #define MIPSEL		0x03
 #define ARMV4LE		0x04
 #define ARMV7LE		0x05
+#define POWERPC		0x06
 #define ARMV8LE		0x07
 
 #if C_TARGETCPU == X86_64
@@ -148,8 +149,15 @@ static struct {
 #include "core_dynrec/risc_mipsel32.h"
 #elif (C_TARGETCPU == ARMV4LE) || (C_TARGETCPU == ARMV7LE)
 #include "core_dynrec/risc_armv4le.h"
+#elif C_TARGETCPU == POWERPC
+#include "core_dynrec/risc_ppc.h"
 #elif C_TARGETCPU == ARMV8LE
 #include "core_dynrec/risc_armv8le.h"
+#endif
+
+#if !defined(WORDS_BIGENDIAN)
+#define gen_add_LE gen_add
+#define gen_mov_LE_word_to_reg gen_mov_word_to_reg
 #endif
 
 #include "core_dynrec/decoder.h"
@@ -225,8 +233,8 @@ Bits CPU_Core_Dynrec_Run(void) {
 run_block:
 		cache.block.running=0;
 		// now we're ready to run the dynamic code block
-//		BlockReturn ret=((BlockReturn (*)(void))(block->cache.start))();
-		BlockReturn ret=core_dynrec.runcode(block->cache.start);
+		//BlockReturn ret=((BlockReturn (*)(void))(block->cache.start))();
+     	BlockReturn ret=core_dynrec.runcode(block->cache.start);
 
 		switch (ret) {
 		case BR_Iret:
