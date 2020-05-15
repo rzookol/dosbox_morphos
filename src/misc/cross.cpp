@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2002-2020  The DOSBox Team
+ *  Copyright (C) 2002-2019  The DOSBox Team
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -74,8 +74,10 @@ void Cross::GetPlatformConfigName(std::string& in) {
 #define DEFAULT_CONFIG_FILE "dosbox-" VERSION ".conf"
 #elif defined(MACOSX)
 #define DEFAULT_CONFIG_FILE "DOSBox " VERSION " Preferences"
+#elif defined(__MORPHOS__)
+#define DEFAULT_CONFIG_FILE "dosbox.conf"
 #else /*linux freebsd*/
-#define DEFAULT_CONFIG_FILE "dosbox-" VERSION ".conf"
+#define DEFAULT_CONFIG_FILE "dosbox-" VERSION ".conf"	
 #endif
 	in = DEFAULT_CONFIG_FILE;
 }
@@ -89,6 +91,8 @@ void Cross::CreatePlatformConfigDir(std::string& in) {
 	in = "~/Library/Preferences";
 	ResolveHomedir(in);
 	//Don't create it. Assume it exists
+#elif defined(__MORPHOS__)
+	in = "PROGDIR:";
 #else
 	in = "~/.dosbox";
 	ResolveHomedir(in);
