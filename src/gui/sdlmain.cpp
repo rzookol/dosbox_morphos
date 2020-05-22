@@ -139,7 +139,8 @@ enum SCREEN_TYPES	{
 	SCREEN_SURFACE,
 	SCREEN_SURFACE_DDRAW,
 	SCREEN_OVERLAY,
-	SCREEN_OPENGL
+	SCREEN_OPENGL,
+	SCREEN_OVERLAY2
 };
 
 enum PRIORITY_LEVELS {
@@ -423,6 +424,7 @@ check_gotbpp:
 		goto check_gotbpp;
 #endif
 	case SCREEN_OVERLAY:
+	case SCREEN_OVERLAY2:
 		//We only accept 32bit output from the scalers here
 		//Can't handle true color inputs
 		if (flags & GFX_RGBONLY || !(flags&GFX_CAN_32)) goto check_surface;
@@ -671,7 +673,7 @@ dosurface:
 		if (!(flags&GFX_CAN_32) || (flags & GFX_RGBONLY)) goto dosurface;
 		if (!GFX_SetupSurfaceScaled(0,0)) goto dosurface;
 		#if __MORPHOS__
-		sdl.overlay=SDL_CreateYUVOverlay(width,height,/*SDL_UYVY_OVERLAY*/SDL_YUY2_OVERLAY,sdl.surface);
+		sdl.overlay=SDL_CreateYUVOverlay(width*2, height, SDL_YUY2_OVERLAY,sdl.surface);
 		#else
 		sdl.overlay=SDL_CreateYUVOverlay(width*2,height,SDL_UYVY_OVERLAY,sdl.surface);
 		#endif
@@ -682,10 +684,29 @@ dosurface:
 		}
 		sdl.desktop.type=SCREEN_OVERLAY;
 		#if __MORPHOS__
-		retFlags = GFX_CAN_16| GFX_SCALING | GFX_HARDWARE;
+		retFlags = GFX_CAN_32| GFX_SCALING | GFX_HARDWARE;
 		#else
 		retFlags = GFX_CAN_32 | GFX_SCALING | GFX_HARDWARE;
 		#endif
+		break;
+	case SCREEN_OVERLAY2:
+		if (sdl.overlay) {
+			SDL_FreeYUVOverlay(sdl.overlay);
+			sdl.overlay=0;
+		}
+		if (!(flags&GFX_CAN_32) || (flags & GFX_RGBONLY)) goto dosurface;
+		if (!GFX_SetupSurfaceScaled(0,0)) goto dosurface;
+		
+#define SDL_RGB16_OVERLAY 0x4c353635 
+		sdl.overlay=SDL_CreateYUVOverlay(width, height, SDL_RGB16_OVERLAY, sdl.surface);
+
+		if (!sdl.overlay) {
+			LOG_MSG("SDL: Failed to create overlay, switching back to surface");
+			goto dosurface;
+		}
+		sdl.desktop.type=SCREEN_OVERLAY2;
+		retFlags = GFX_CAN_16| GFX_SCALING | GFX_HARDWARE;
+
 		break;
 #if C_OPENGL
 	case SCREEN_OPENGL:
@@ -934,6 +955,7 @@ bool GFX_StartUpdate(Bit8u * & pixels,Bitu & pitch) {
 		return true;
 #endif
 	case SCREEN_OVERLAY:
+	case SCREEN_OVERLAY2:
 		if (SDL_LockYUVOverlay(sdl.overlay)) return false;
 		pixels=(Bit8u *)*(sdl.overlay->pixels);
 		pitch=*(sdl.overlay->pitches);
@@ -1022,6 +1044,7 @@ void GFX_EndUpdate( const Bit16u *changedLines ) {
 		break;
 #endif
 	case SCREEN_OVERLAY:
+	case SCREEN_OVERLAY2:
 		SDL_UnlockYUVOverlay(sdl.overlay);
 		SDL_DisplayYUVOverlay(sdl.overlay,&sdl.clip);
 		break;
@@ -1334,6 +1357,9 @@ static void GUI_StartUp(Section * sec) {
 #endif
 	} else if (output == "overlay") {
 		sdl.desktop.want_type=SCREEN_OVERLAY;
+	}
+	else if (output == "overlay2") {
+		sdl.desktop.want_type=SCREEN_OVERLAY2;
 #if C_OPENGL
 	} else if (output == "opengl") {
 		sdl.desktop.want_type=SCREEN_OPENGL;
@@ -1779,7 +1805,7 @@ void Config_Add_SDL() {
 	                  "(output=surface does not!)");
 
 	const char* outputs[] = {
-		"surface", "overlay",
+		"surface", "overlay", "overlay2",
 #if C_OPENGL
 		"opengl", "openglnb",
 #endif

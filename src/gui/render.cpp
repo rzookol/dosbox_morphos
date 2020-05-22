@@ -80,7 +80,8 @@ enum SCREEN_TYPES	{
 	SCREEN_SURFACE,
 	SCREEN_SURFACE_DDRAW,
 	SCREEN_OVERLAY,
-	SCREEN_OPENGL
+	SCREEN_OPENGL,
+	SCREEN_OVERLAY2
 };
 
 
@@ -173,11 +174,25 @@ Bitu inline GFX_GetRGB(Bit8u red,Bit8u green,Bit8u blue) {
 	case SCREEN_SURFACE_DDRAW:
 #if __MORPHOS__
 		return blue <<24 | green << 16 | red << 8;
-	
+	case SCREEN_OVERLAY2:
+	{
+			short ret = ((red>>3)<<11)|((green>>2)<<5)|(blue>>3);
+			return  __builtin_bswap16(ret);
+	}
+	break;
 	case SCREEN_OVERLAY:
 		{
-		short ret = ((red>>3)<<11)|((green>>2)<<5)|(blue>>3);
-			return  __builtin_bswap16(ret);
+	/*	short ret = ((red>>3)<<11)|((green>>2)<<5)|(blue>>3);
+			return  __builtin_bswap16(ret);*/
+			
+			Bit8u y =  ( 9797*(red) + 19237*(green) +  3734*(blue) ) >> 15;
+			Bit8u u =  (18492*((blue)-(y)) >> 15) + 128;
+			Bit8u v =  (23372*((red)-(y)) >> 15) + 128;
+#ifdef WORDS_BIGENDIAN
+			return (v << 0) | (y << 8) | (u << 16) | (y << 24);
+#else
+			return (u << 0) | (y << 8) | (v << 16) | (y << 24);
+#endif
 		}
 #else
 		return SDL_MapRGB(sdl.surface->format,red,green,blue);

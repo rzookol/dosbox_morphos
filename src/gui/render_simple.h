@@ -95,11 +95,13 @@ static void conc4d(SCALERNAME,SBPP,DBPP,R)(const void *s) {
 #endif
 #endif //defined(SCALERLINEAR)
 			hadChange = 1;
-			for (Bitu i = x > 32 ? 32 : x;i>0;i--,x--) {
+			for (Bitu i = x > 32 ? 32 : x;i>0;i--, x--) 
+			{
 				const SRCTYPE S = *src;
 				*cache = S;
 				src++;cache++;
 				const PTYPE P = PMAKE(S);
+
 				SCALERFUNC;
 				line0 += SCALERWIDTH;
 #if (SCALERHEIGHT > 1) 
