@@ -51,9 +51,10 @@
 
 /* Define to 1 to use recompiling cpu core. Can not be used together with the
    dynamic-x86 core */
-#define C_DYNREC  1
+/* #undef C_DYNREC */
 
 /* Define to 1 to enable floating point emulation */
+#define C_DYNREC 1
 #define C_FPU 1
 
 /* Define to 1 to use a x86/x64 assembly fpu core */
@@ -89,10 +90,10 @@
 
 /* Define to 1 to enable movie recording, requires zlib built without Z_SOLO
    */
-/* #undef C_SRECORD */
+#define C_SRECORD 1
 
 /* Define to 1 to enable screenshots, requires libpng */
-/* #undef C_SSHOT */
+#define C_SSHOT 1
 
 /* Compiler supports Core Audio headers */
 /* #undef C_SUPPORTS_COREAUDIO */

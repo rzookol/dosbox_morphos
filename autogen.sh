@@ -5,9 +5,9 @@ echo "This may take a while ..."
 
 # Regenerate configuration files.
 
-aclocal
+aclocal-1.16
 autoheader
-automake --include-deps --add-missing --copy 
+automake-1.16 --include-deps --add-missing --copy 
 autoconf
 
 echo "Now you are ready to run ./configure."
