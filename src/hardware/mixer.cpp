@@ -60,7 +60,7 @@
 #define FREQ_NEXT ( 1 << FREQ_SHIFT)
 #define FREQ_MASK ( FREQ_NEXT -1 )
 
-#define TICK_SHIFT 14
+#define TICK_SHIFT 24
 #define TICK_NEXT ( 1 << TICK_SHIFT)
 #define TICK_MASK (TICK_NEXT -1)
 
@@ -701,7 +701,7 @@ void MIXER_Init(Section* sec) {
 		mixer.tick_add=calc_tickadd(mixer.freq);
 		TIMER_AddTickHandler(MIXER_Mix_NoSound);
 	} else {
-		if((mixer.freq != obtained.freq) || (mixer.blocksize != obtained.samples))
+		if ((mixer.freq != static_cast<Bit32u>(obtained.freq)) || (mixer.blocksize != obtained.samples))
 			LOG_MSG("MIXER: Got different values from SDL: freq %d, blocksize %d",obtained.freq,obtained.samples);
 		mixer.freq=obtained.freq;
 		mixer.blocksize=obtained.samples;
@@ -709,10 +709,13 @@ void MIXER_Init(Section* sec) {
 		TIMER_AddTickHandler(MIXER_Mix);
 		SDL_PauseAudio(0);
 	}
-	mixer.min_needed=section->Get_int("prebuffer");
-	if (mixer.min_needed>100) mixer.min_needed=100;
-	mixer.min_needed=(mixer.freq*mixer.min_needed)/1000;
-	mixer.max_needed=mixer.blocksize * 2 + 2*mixer.min_needed;
-	mixer.needed=mixer.min_needed+1;
+	//1000 = 8 *125
+	mixer.tick_counter = (mixer.freq%125)?TICK_NEXT:0;
+
+	mixer.min_needed = section->Get_int("prebuffer");
+	if (mixer.min_needed > 100) mixer.min_needed = 100;
+	mixer.min_needed = (mixer.freq*mixer.min_needed)/1000;
+	mixer.max_needed = mixer.blocksize * 2 + 2*mixer.min_needed;
+	mixer.needed = mixer.min_needed+1;
 	PROGRAMS_MakeFile("MIXER.COM",MIXER_ProgramStart);
 }
